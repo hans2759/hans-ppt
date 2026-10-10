@@ -21,7 +21,8 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_json, load_style, clen, CANVAS_W  # noqa: E402
+from common import (load_json, load_style, clen, CANVAS_W, speaker_notes_text,
+                    slide_rhythm, slide_minutes)  # noqa: E402
 
 CONTENT_ROLES_SKIP = ("background", "decor", "chrome")
 NEUTRALS = {"FFFFFF", "000000", "1A1A1A", "111111"}  # ink_on() picks these for text on fills
@@ -112,11 +113,13 @@ def main():
 
     # ---- 传达
     dens, no_notes = [], []
+    preserve_notes = bool(deck.get("meta", {}).get("preserve_notes"))
     for s in deck["slides"]:
         from outline_check import screen_text
         c = sum(clen(t) for t in screen_text(s))
         dens.append((s["n"], c))
-        if not s.get("notes") and s.get("type") not in ("cover", "section", "toc", "closing"):
+        note_text = speaker_notes_text(s, preserve_legacy=bool(preserve_notes or s.get("preserve_notes")))
+        if not note_text and s.get("type") not in ("cover", "section", "toc", "closing"):
             no_notes.append(s["n"])
     heavy = [f"{k}({c})" for k, c in dens if c > 160]
     convey = [
@@ -129,15 +132,24 @@ def main():
     # ---- 节奏
     layouts = [sd["layout"] for sd in slides]
     runs = [layouts[i] for i in range(2, n) if layouts[i] == layouts[i - 1] == layouts[i - 2]]
+    rhythm_classes = [slide_rhythm(s) for s in deck["slides"]]
+    dense_runs = [deck["slides"][i]["n"] for i in range(3, len(rhythm_classes))
+                  if rhythm_classes[i - 3:i + 1] == ["dense"] * 4]
     counts = [c for _, c in dens]
     heroes = sum(1 for sd in slides for e in sd["elements"] if e["t"] == "image" and e.get("role") not in ("background", "decor"))
     rhythm = [
         ("用到的版式种数 / 页数", f"{len(set(layouts))} / {n}", "至少一半"),
         ("连续三页同版式", runs or "无", "应为无"),
+        ("连续四页 dense 的终点页", dense_runs or "无", "应为无；用 breathing/anchor 页制造呼吸"),
+        ("节奏角色", ", ".join(f"{k}×{v}" for k, v in Counter(rhythm_classes).items()), "anchor / dense / breathing 要与内容起伏匹配"),
         ("字数起伏（标准差 / 平均）", round(st.pstdev(counts) / max(1, st.mean(counts)), 2) if counts else 0,
          "0.3 到 0.7 有呼吸感；太低像流水账，太高忽密忽疏"),
         ("插画数量", heroes, "封面、章节、结论页有图就够，不必页页有"),
     ]
+    timing = [slide_minutes(s) for s in deck["slides"]]
+    if any(v is not None for v in timing):
+        rhythm.append(("计划讲述时长", f"{sum(v or 0 for v in timing):g} 分钟",
+                       "有目标时长时建议计划不超过 90%，给停顿和现场变化留余量"))
 
     def table(rows):
         lines = ["| 检查项 | 结果 | 参考 |", "|---|---|---|"]

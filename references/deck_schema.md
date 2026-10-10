@@ -28,8 +28,11 @@ deck.json 描述"这份 PPT 在讲什么"，和样式无关。版式函数只认
 | `topic` | 英文一句话主题，插画提示词会引用 |
 | `anchor` | 视觉锚点，见 `image_prompts.md`。`glyph` 是程序化插画里瓷砖上的字母 |
 | `scenario` / `audience` / `density` | 生成模式用：场景（oral、talk、reading、report）、受众、密度（low / high） |
+| `objective` / `audience_outcome` | 这份演示要完成什么；观众看完后应知道、相信或做什么 |
 | `storyline` | 生成模式用，一句话故事线 |
+| `duration_minutes` | 目标总时长；有值时 `outline_check.py` 检查逐页计划是否留出 10% 缓冲 |
 | `notes` | 生成模式用，true 表示每页都要口播备注 |
+| `preserve_notes` | 默认 false；只有用户明确要求旧备注逐字保留时才设 true |
 | `auto_page` | true 时内容页自动加"03 / 11"式页码，不用逐页写 `page` |
 | `projection` | true 时按投影场景排版，自动字号不低于 14pt、正文从 18pt 起，容量上限按 65% 计；装不下的页会被 QA 报出来，拆页处理 |
 | `date` / `issue` | 杂志式页眉右上角的日期或期号，大字封面顶部也会用 |
@@ -40,17 +43,37 @@ deck.json 描述"这份 PPT 在讲什么"，和样式无关。版式函数只认
 | 字段 | 说明 |
 |---|---|
 | `n` | 页码序号，从 1 开始，与原稿一致 |
+| `id` | 生成模式推荐：稳定的英文语义 slug，如 `problem-cost`；重排页面时不改 |
 | `type` | 页型，决定默认版式，见下表 |
 | `layout` | 可选，直接指定版式，优先级低于 plan.json |
 | `title` | 页面标题 |
 | `takeaway` | 这一页的一句话结论，放进底部胶囊条（原稿里页面底部的强调条、提示框通常就是它） |
 | `page` | 页码文字，照抄原稿，比如 `"02 / 11"`，封面结尾通常没有 |
-| `notes` | 演讲备注。美化时照抄 `deck.draft.json`，生成时写口播原话 |
+| `notes` | 演讲备注。两条路线都优先写结构化对象；美化时旧备注只作素材，见下节 |
 | `purpose` | 生成模式用，这一页在故事里负责什么，不上页面 |
+| `audience_move` | 生成模式用：观众看完本页后发生的认知、信念或行动变化，不上页面 |
+| `rhythm` | `anchor` / `dense` / `breathing`；省略时按页型推断，不上页面 |
+| `transition` / `minutes` | 可放页级转场和计划分钟数；也可写在结构化 `notes` 里 |
 | `source` | 数据出处，显示成页面底部的小字"来源：…" |
 | `show_footer` | 默认内容页显示页脚，设 false 隐藏 |
 
 文字里可以用 `**片段**` 标记局部加粗，渲染时加粗并用强调色。`\n` 表示换段。
+
+### 结构化演讲备注
+
+生成路线推荐使用对象，`build_deck.py` 会整理成 PowerPoint 备注页里的分区文本：
+
+```json
+"notes": {
+  "talk": ["先解释统计口径", "指出最值得记住的变化", "停一下让数字被看见"],
+  "transition": "证据已经成立，下一页进入解决方案",
+  "minutes": 0.8,
+  "cue": "指向右侧高亮数据",
+  "fallback": "如果时间不足，只讲第一条"
+}
+```
+
+`talk` 是核心；`transition` 解释下一页为什么出现；`minutes` 是讲述计划，不是自动翻页。`cue`、`interaction`、`delivery`、`advance`、`fallback`、`pronunciation` 只在用户或素材提供时写。旧稿里的字符串 `notes` 只供规划阶段参考，默认不会写入成品；必须先改写成上述结构化对象。只有用户明确要求，并设置 `meta.preserve_notes: true` 或该页 `preserve_notes: true` 时，旧字符串才会逐字保存。
 
 ## 每页都能用的小字段
 

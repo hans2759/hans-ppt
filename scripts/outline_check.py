@@ -12,6 +12,7 @@ Checks (rules are explained in references/generate.md)
   ghost      prints all titles in order: read them alone, they should tell the story
   density    on-screen text per slide against meta.density (low: 口播/演讲, high: 阅读/汇报)
   items      list length against the density limit, split the slide if exceeded
+  contract   stable page ids, audience moves, transitions, rhythm and duration budget
   notes      speaker notes present and roughly 40-260 characters when meta.notes is on
   pages      page count against analysis.json
   flow       the same slide type three times in a row; long decks without section slides;
@@ -23,7 +24,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_json, strip_marks  # noqa: E402
+from common import (load_json, strip_marks, speaker_talk_text, slide_minutes,
+                    slide_transition, slide_rhythm)  # noqa: E402
 import capacity  # noqa: E402
 import layouts as LY  # noqa: E402
 
@@ -33,8 +35,10 @@ LIMITS = {  # on-screen characters (notes excluded) and list length per slide
 }
 TOPIC_WORDS = ["介绍", "概述", "简介", "总结", "背景", "目录", "注意事项", "优势", "方法", "原理", "概况",
                "现状", "分析", "说明", "要点", "内容", "问题", "结论", "谢谢", "感谢", "Q&A", "结束"]
-NON_SCREEN = {"n", "type", "layout", "notes", "page", "emphasis", "icon", "purpose", "show_footer", "source",
-              "chart", "kind", "highlight_col", "image", "at", "frame", "flow", "tone", "boxed", "stamps"}
+NON_SCREEN = {"n", "id", "type", "layout", "notes", "page", "emphasis", "icon", "purpose", "audience_move",
+              "transition", "minutes", "rhythm", "show_footer", "source", "source_ids", "image_role", "image_slot",
+              "preserve_notes", "chart", "kind", "highlight_col", "image", "at", "frame", "flow", "tone", "boxed",
+              "stamps"}
 NO_TITLE_TYPES = {"cover", "closing", "section", "toc", "question", "big_quote"}
 
 
@@ -85,10 +89,27 @@ def main():
     def add(level, n, msg):
         issues.append((level, n, msg))
 
-    # titles + ghost deck
+    # communication contract + titles + ghost deck
+    if not meta.get("objective"):
+        add("WARN", 0, "缺少 meta.objective，无法判断这份演示要完成什么")
+    if not meta.get("audience_outcome"):
+        add("WARN", 0, "缺少 meta.audience_outcome，无法判断观众看完应知道、相信或做什么")
+    seen_ids = set()
     ghost = []
     for s in slides:
         n, typ = s.get("n"), s.get("type", "")
+        sid = str(s.get("id") or "").strip()
+        if not sid:
+            add("WARN", n, "缺少稳定 id；后续重排和局部修改不容易追踪")
+        else:
+            if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", sid):
+                add("WARN", n, f"页面 id 应使用小写英文 slug：{sid}")
+            if sid in seen_ids:
+                add("ERROR", n, f"重复的页面 id：{sid}")
+            else:
+                seen_ids.add(sid)
+        if typ not in ("cover", "section", "toc", "closing") and not s.get("audience_move"):
+            add("WARN", n, "缺少 audience_move：这一页要让观众发生什么认知变化")
         title = s.get("title") or s.get("headline") or s.get("question") or s.get("quote") or ""
         ghost.append((n, typ, strip_marks(title)))
         if typ in NO_TITLE_TYPES:
@@ -113,11 +134,21 @@ def main():
         if len(items) > lim["items"]:
             add("WARN", n, f"{len(items)} 条要点，超过 {density} 密度上限 {lim['items']} 条，建议拆成两页")
         if notes_on and typ not in ("section", "toc"):
-            nt = strip_marks(s.get("notes", ""))
+            legacy_notes = isinstance(s.get("notes"), str) and bool(s.get("notes", "").strip())
+            preserve_notes = bool(meta.get("preserve_notes") or s.get("preserve_notes"))
+            if legacy_notes and not preserve_notes:
+                add("WARN", n, "旧式字符串备注不会写入成品；请按新模式改成含 talk/transition/minutes 的结构化 notes")
+            nt = "" if legacy_notes and not preserve_notes else strip_marks(speaker_talk_text(s.get("notes")))
             if not nt:
                 add("WARN", n, "没有口播备注")
             elif clen(nt) < 40 or clen(nt) > 260:
                 add("WARN", n, f"备注约 {clen(nt)} 字，口播一页建议 40 到 260 字")
+            last_n = slides[-1].get("n") if slides else None
+            if meta.get("scenario") in ("oral", "talk") and n != last_n and not slide_transition(s):
+                add("WARN", n, "没有转场；说明下一页为什么紧接着出现")
+        minutes = slide_minutes(s)
+        if minutes is not None and minutes <= 0:
+            add("ERROR", n, "minutes 必须是正数")
     # layout capacity: does the content fit the layout it will get?
     for s in slides:
         lay = s.get("layout") or LY.TYPE_TO_LAYOUTS.get(s.get("type"), ["list_icons"])[0]
@@ -138,6 +169,31 @@ def main():
         t = [slides[j].get("type") for j in (i - 2, i - 1, i)]
         if t[0] == t[1] == t[2] and t[0] not in ("section",):
             add("WARN", slides[i].get("n"), f"连续三页都是 {t[0]}，换一种页型或版式")
+    rhythms = [slide_rhythm(s) for s in slides]
+    for i in range(3, len(rhythms)):
+        if rhythms[i - 3:i + 1] == ["dense"] * 4:
+            add("WARN", slides[i].get("n"), "连续四页都是 dense，插入 breathing/anchor 页或降低一页信息密度")
+
+    duration = meta.get("duration_minutes")
+    if duration is not None:
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            add("ERROR", 0, "meta.duration_minutes 必须是数字")
+            duration = None
+        if duration is not None and duration <= 0:
+            add("ERROR", 0, "meta.duration_minutes 必须是正数")
+        if duration and notes_on:
+            planned = [slide_minutes(s) for s in slides]
+            missing = [s.get("n") for s, m in zip(slides, planned) if m is None]
+            if missing:
+                add("WARN", 0, f"目标时长 {duration:g} 分钟，但这些页没有 minutes：{missing}")
+            else:
+                total = sum(planned)
+                if total > duration:
+                    add("ERROR", 0, f"计划讲述 {total:g} 分钟，超过目标 {duration:g} 分钟")
+                elif total > duration * 0.9:
+                    add("WARN", 0, f"计划讲述 {total:g} 分钟，占目标时长 {total / duration:.0%}；建议不超过 90% 留给停顿和现场变化")
     if len(slides) > 15 and not any(s.get("type") == "section" for s in slides):
         add("WARN", 0, "超过 15 页，建议加章节分隔页（type: section）")
     if slides and slides[-1].get("type") == "closing":
@@ -150,20 +206,35 @@ def main():
     # outline.md for the user
     out = [f"# {meta.get('title', '')} 大纲", ""]
     out.append(f"场景 {meta.get('scenario', '')} · 受众 {meta.get('audience', '')} · 密度 {density} · 共 {len(slides)} 页")
+    if meta.get("objective"):
+        out += ["", f"目标：{meta['objective']}"]
+    if meta.get("audience_outcome"):
+        out.append(f"观众结果：{meta['audience_outcome']}")
     if meta.get("storyline"):
         out += ["", f"故事线：{meta['storyline']}"]
     out += ["", "## 只读标题（幽灵稿）", ""] + [f"{n}. {t}" for n, _, t in ghost]
     out += ["", "## 逐页", ""]
     for s in slides:
         title = s.get("title") or s.get("headline") or s.get("question") or s.get("quote") or ""
-        out.append(f"### {s.get('n')} · {s.get('type', '')} · {strip_marks(title)}")
+        out.append(f"### {s.get('n')} · {s.get('id', 'no-id')} · {s.get('type', '')} · {strip_marks(title)}")
         if s.get("purpose"):
             out.append(f"- 作用：{s['purpose']}")
+        if s.get("audience_move"):
+            out.append(f"- 观众变化：{s['audience_move']}")
+        out.append(f"- 节奏：{slide_rhythm(s)}")
         body = [t for t in screen_text(s) if t != strip_marks(title)]
         if body:
             out.append("- 屏幕：" + " / ".join(body))
         if s.get("notes"):
-            out.append("- 口播：" + strip_marks(s["notes"]))
+            preserve_notes = bool(meta.get("preserve_notes") or s.get("preserve_notes"))
+            if isinstance(s["notes"], str) and not preserve_notes:
+                out.append("- 口播：待按新模式重写（旧式字符串未采用）")
+            else:
+                out.append("- 口播：" + strip_marks(speaker_talk_text(s["notes"])))
+        if slide_transition(s):
+            out.append("- 转场：" + slide_transition(s))
+        if slide_minutes(s) is not None:
+            out.append(f"- 时长：{slide_minutes(s):g} 分钟")
         out.append("")
     (work / "outline.md").write_text("\n".join(out), encoding="utf-8")
 

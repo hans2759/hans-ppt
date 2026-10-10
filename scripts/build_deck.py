@@ -15,7 +15,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_json, save_json, load_style, CANVAS_W, CANVAS_H, text_width_pt, mix  # noqa: E402
+from common import (load_json, save_json, load_style, CANVAS_W, CANVAS_H,
+                    text_width_pt, mix, speaker_notes_text)  # noqa: E402
 import layouts as L  # noqa: E402
 
 from pptx import Presentation  # noqa: E402
@@ -689,7 +690,10 @@ def main():
         rail = 6.25 if pill else (6.45 if ((s.get("source") or s.get("footnote")) and style.decor.get("chrome") != "editorial") else 6.8)
         slide = prs.slides.add_slide(blank)
         b.render(slide, all_els)
-        notes = s.get("notes")
+        notes = speaker_notes_text(
+            s,
+            preserve_legacy=bool(meta_ctx.get("preserve_notes") or s.get("preserve_notes")),
+        )
         if notes:
             slide.notes_slide.notes_text_frame.text = notes
         dump["slides"].append({"n": s["n"], "layout": lname, "master": info.get("master", "content"),

@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-SKILL_VERSION = "2.5.0"
+SKILL_VERSION = "2.6.0"
 SKILL_DIR = Path(__file__).resolve().parent.parent
 # bundled icons and gallery: <skill>/assets, or <skill>/scripts/assets in packages whose
 # platform only allows SKILL.md + references/ + scripts/ + templates/ (WorkBuddy)
@@ -38,6 +38,100 @@ def save_json(obj, path):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
+
+
+# ---------------------------------------------------------------- presentation contract
+def speaker_talk_text(notes):
+    """Return only the spoken body from legacy or structured speaker notes."""
+    if isinstance(notes, str):
+        return notes.strip()
+    if not isinstance(notes, dict):
+        return ""
+    talk = notes.get("talk", "")
+    if isinstance(talk, list):
+        return "\n".join(str(x).strip() for x in talk if str(x).strip())
+    return str(talk or "").strip()
+
+
+def slide_minutes(slide):
+    """Read a planned duration from slide.minutes or structured notes.minutes."""
+    value = slide.get("minutes")
+    if value is None and isinstance(slide.get("notes"), dict):
+        value = slide["notes"].get("minutes")
+    try:
+        return float(value) if value is not None and str(value).strip() else None
+    except (TypeError, ValueError):
+        return None
+
+
+def slide_transition(slide):
+    """Read the narrative handoff without changing legacy string notes."""
+    value = slide.get("transition")
+    if value is None and isinstance(slide.get("notes"), dict):
+        value = slide["notes"].get("transition")
+    return str(value or "").strip()
+
+
+def slide_rhythm(slide):
+    """Classify a page's pacing role; an explicit rhythm value wins."""
+    explicit = str(slide.get("rhythm") or "").strip().lower()
+    if explicit in {"anchor", "dense", "breathing"}:
+        return explicit
+    typ = slide.get("type", "")
+    if typ in {"cover", "section", "toc", "closing"}:
+        return "anchor"
+    if typ in {"question", "big_quote", "statement", "big_number"}:
+        return "breathing"
+    return "dense"
+
+
+def speaker_notes_text(slide, preserve_legacy=False):
+    """Serialize structured notes into plain PowerPoint speaker notes.
+
+    Structured notes are the primary format. Legacy strings are deliberately
+    omitted unless preservation was explicitly requested: semantic rewriting
+    belongs in the planning step, and the renderer must never smuggle an old
+    note into a newly designed deck unchanged.
+    """
+    notes = slide.get("notes")
+    if isinstance(notes, str):
+        if preserve_legacy:
+            return notes
+        notes = {}
+    if not isinstance(notes, dict):
+        return ""
+
+    purpose = str(notes.get("purpose") or slide.get("purpose") or "").strip()
+    transition = slide_transition(slide)
+    minutes = slide_minutes(slide)
+    talk = notes.get("talk", [])
+    if isinstance(talk, str):
+        talk = [talk] if talk.strip() else []
+    elif not isinstance(talk, list):
+        talk = [str(talk)] if talk else []
+
+    parts = []
+    if purpose:
+        parts.append(f"【本页目的】\n{purpose}")
+    if talk:
+        parts.append("【讲述要点】\n" + "\n".join(f"• {str(x).strip()}" for x in talk if str(x).strip()))
+    if transition:
+        parts.append(f"【转场】\n{transition}")
+    if minutes is not None:
+        parts.append(f"【建议时长】\n{minutes:g} 分钟")
+
+    labels = {
+        "cue": "提示", "interaction": "互动", "delivery": "表达",
+        "advance": "翻页时机", "fallback": "备用方案", "pronunciation": "读音",
+    }
+    for key, label in labels.items():
+        value = notes.get(key)
+        if not value:
+            continue
+        if isinstance(value, list):
+            value = "\n".join(f"• {str(x).strip()}" for x in value if str(x).strip())
+        parts.append(f"【{label}】\n{value}")
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------- colors
