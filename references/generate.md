@@ -1,58 +1,57 @@
 # 从零生成 PPT
 
 输入可以是一篇文章或口播稿、一个题目、一份大纲，也可以是 .docx / .pdf / .pptx 素材。
-生成和美化共用同一套设计引擎，区别只在前半程：美化是从原稿里抽出 deck.json，生成是自己写出 deck.json。
-生成模式下文字可以改写、精简、重组，这是和美化最大的不同。
+本路线创建一份新的原生 PPT。素材里的文字可以改写、精简、重组；已有 PPT 需要拆页、并页或重构时，也把它作为素材进入本路线。
+
+开始前已由 `workflow.md` 选定本路线和 Default/Quick；再读 `presentation_contract.md`，先确定沟通契约和每页观众变化。
 
 ## 流程总览
 
-| 步 | 做什么 | 工具 | 停下来确认 |
+| 步 | 做什么 | 产物 / 工具 | Default 门 |
 |---|---|---|---|
-| G1 | 问清需求 | 一次提问 | 是 |
-| G2 | 分析素材 | `analyze_source.py` | 否 |
-| G3 | 写 deck.json | 按本文规则 | 否 |
-| G4 | 检查大纲，给用户过目 | `outline_check.py` → outline.md | 是 |
-| G5 | 定风格 | 有参考图走 `extract_style.py`；没有就 `style_previews.py --auto` 出三张样张 | 是 |
-| G6 | 版式规划 | `plan_deck.py` → design_spec.md | 是（快速模式跳过） |
-| G7 | 出图、组装、检查 | `pipeline.py` | 否 |
-| G8 | 交付 | pptx + 预览图 + 一句话说明 | |
+| 1 | 分析素材和事实缺口 | `analysis.md` | 否 |
+| 2 | 推荐沟通契约与视觉来源 | Stage 1 摘要 | 是 |
+| 3 | 写内容、风格和逐页规划 | `deck.json`、`style.json`、`plan.json`、`design_spec.md` | 否 |
+| 4 | 确认完整演示解决方案 | `design_spec.md` | 是 |
+| 5 | 生产、QA、修复、交付 | `production.md` | 否 |
 
-用户说"直接出""不用问我"时进入快速模式：G1 用默认值，G4、G5、G6 不停，自动选第一套风格样张，交付时把做过的选择列出来。
+Quick 只有显式触发：不展示 Stage 1/2，也不等待，但必须在当前上下文完成同等决策并生成四个生产输入。
 
-## G1 问清需求
-
-用一次提问问完，没回答的用括号里的默认值。
-
-- 用在哪里：口播视频 / 现场演讲 / 发出去给人读 / 工作汇报（口播视频）
-- 给谁看：小白 / 有基础 / 专业同行 / 老板（小白）
-- 多长：几分钟或几页（按素材估）
-- 风格：有没有参考图；没有就出三张样张挑（出样张）
-- 要不要口播备注（口播和演讲默认要）
-
-场景决定密度：口播和演讲用 low（一页一个观点，屏幕字少，展开的话放备注），阅读和汇报用 high（一页能独立看懂，可以多放几条）。
-
-## G2 分析素材
+## Step 1：素材分析
 
 ```bash
 python3 $S/analyze_source.py $W --file 文章.md --scenario oral
 python3 $S/analyze_source.py $W --topic "题目" --minutes 3
 ```
 
-得到 analysis.md：字数、原文标题结构、可做成数据页的数字、风格线索、建议页数。
-页数估算的经验是口播一页约 25 秒、对应 150 字左右原文；大纲按"每个二级标题至少一页"。
+得到 `analysis.md`：字数、原文标题结构、数字、风格线索和建议页数。只有题目或素材存在规划所需的事实缺口时才搜索查证；封闭素材任务不扩展事实范围。
 
-**只有题目时**，先定"观众看完要记住的一句话"，再列三到五个支撑点。涉及事实、数据、产品现状的，先用搜索查证，查不到的不写，绝不编数字。
+## Step 2：Stage 1 沟通契约
 
-## G3 写 deck.json
+Default 根据素材给出一个明确推荐，一次确认：
 
-字段格式见 `deck_schema.md`。生成模式额外用到这些字段。
+- 场景、受众和阅读距离；
+- 演示目标、观众结果和核心信息；
+- 页数/时长范围与内容自由度；
+- 自由设计或参考图；
+- 事实边界与备注策略。
+
+用户确认后运行 `python3 $S/workflow_state.py confirm $W stage1`。Quick 直接决定。场景决定密度：口播和演讲用 low，阅读和汇报用 high。
+
+## Step 3：完整方案
+
+先写 `deck.json`，字段格式见 `deck_schema.md`：
 
 ```json
 {"meta": {"title": "…", "scenario": "oral", "audience": "小白", "density": "low",
-          "storyline": "一句话讲清这份 PPT 的来龙去脉", "notes": true, "auto_page": true,
+          "objective": "让观众理解并愿意试用", "audience_outcome": "能说清价值并知道第一步怎么做",
+          "storyline": "一句话讲清这份 PPT 的来龙去脉", "duration_minutes": 8,
+          "notes": true, "auto_page": true,
           "series": "页眉小字，可选", "anchor": {"description": "…", "glyph": "M"}},
- "slides": [{"n": 2, "type": "big_number", "purpose": "让观众一句话记住它是什么",
-             "title": "…", "…": "…", "notes": "口播原话", "source": "数据出处，可选"}]}
+ "slides": [{"n": 2, "id": "core-definition", "type": "big_number", "rhythm": "breathing",
+             "purpose": "让观众一句话记住它是什么", "audience_move": "从陌生变成能复述核心定义",
+             "title": "…", "…": "…", "notes": {"talk": ["口播要点"], "transition": "…", "minutes": 0.7},
+             "source": "数据出处，可选"}]}
 ```
 
 ### 先搭故事线
@@ -63,7 +62,7 @@ python3 $S/analyze_source.py $W --topic "题目" --minutes 3
 - **方案型**（汇报）：现状和问题 → 目标 → 方案 → 计划和资源 → 风险 → 需要拍板的事
 - **清单型**（技巧合集）：为什么需要 → 第一条到第 N 条 → 怎么组合 → 行动号召
 
-把主线写进 `meta.storyline`，每页写 `purpose`（这一页在故事里负责什么）。
+把主线写进 `meta.storyline`，每页写 `purpose`（这一页在故事里负责什么）和 `audience_move`（观众发生什么变化）。稳定页 ID、节奏角色和图片槽位规则见 `presentation_contract.md`。
 
 ### 标题写结论
 
@@ -87,9 +86,11 @@ python3 $S/analyze_source.py $W --topic "题目" --minutes 3
 
 ### 口播备注
 
-`notes` 就是要念的稿子：口语、短句、和这一页的内容一一对应，一页 40 到 260 字（约 15 到 60 秒）。
+`notes` 是演讲者在台上需要的内容，不是页面文案的复制。默认写结构化对象：`talk` 放 3–5 条提词卡，`transition` 解释下一页为什么紧接着出现，`minutes` 写计划时长；只有用户明确要求逐字稿时才写长段落。一页口播约 40 到 260 字（约 15 到 60 秒）。
 从文章改写时，备注尽量保留作者原句和语气，屏幕文字再从备注里提炼。
 环境里如果有用户自己的写作风格 skill，备注按那个风格写。
+
+有目标总时长时，每页都写 `minutes`，总计划不超过 `meta.duration_minutes` 的 90%。缺少现场信息时不要猜 `cue`、互动或备用方案。
 
 ### 内容形状决定页型
 
@@ -124,6 +125,8 @@ python3 $S/analyze_source.py $W --topic "题目" --minutes 3
 
 同一种页型别连续出现三次，换一种讲法。各页型的字段见 `deck_schema.md`，每个版式装得下多少用 `python3 $S/layout_info.py <版式名>` 查，里面还带一段能直接改的示例。
 
+节奏用 `anchor / dense / breathing` 标记。连续四页 `dense` 通常会像流水账，优先插入真正承担转折、结论或结构作用的呼吸页，不为配额加空页。
+
 数据页的取舍：只想让人记住一两个数字，用 big_number 或 stats；要让人看出谁大谁小、往哪走、占多少，才上 chart。chart 的标题就是图里最重要的那个结论，insights 补一两条标题没说完的发现。
 
 分析框架别为了显得专业硬套。SWOT 四格里有一格只能凑出空话，就说明这页该换成 compare 或 warnings。
@@ -134,46 +137,43 @@ python3 $S/analyze_source.py $W --topic "题目" --minutes 3
 
 - **文章或口播稿**：先按段落切出故事线，一段往往就是一页；数字优先做成数据页；原文金句可以直接当标题或 takeaway。
 - **大纲**：每个二级标题至少一页；带顺序的列表用 process，"坑""误区"类用 warnings，"写在最后"做结尾页。大纲通常没有展开的话，备注需要补写，补写的事实要查证。
-- **题目**：见 G2 的做法，先查证再写。
+- **题目**：见 Step 1，先查证再写。
 
-## G4 检查大纲
+### 检查内容方案
 
 ```bash
 python3 $S/outline_check.py $W
 ```
 
 它会打印幽灵稿（只读标题），检查话题式标题、密度、要点条数、备注长度、页数、页型重复和结尾页，还会按版式容量报出装不下的页，并给出能装下的替代版式。
-修到没有 ERROR、WARN 都看过为止，然后把 outline.md 的"只读标题"部分发给用户确认。
+修到没有 ERROR、所有 WARN 都判断过为止。`outline.md` 是 Stage 2 的页面 roster 输入，不再单独增加一次确认门。
 
-## G5 定风格
+### 定视觉方向
 
-- 用户给了参考图：走美化流程的第 2 步（`extract_style.py` + 看图写 style.json + `style_card.py`）。
+- 用户给了参考图：运行 `extract_style.py`，看图写 `style.json`，再用 `style_card.py` 检查。
 - 没有参考图：
   ```bash
   python3 $S/style_previews.py $W --auto          # 或 --presets a,b,c 自己挑三套
   python3 $S/style_previews.py $W --apply <id>    # 用户选定后
   ```
-  三张样张分别是稳妥、大胆、意外各一，都是用户自己的封面和第一页内容。把 `previews/sheet.png` 发给用户，并在对话里说明 1、2、3 各是什么风格、适合什么。预设清单见 `styles/index.json`，每套的硬规则在对应的 json 里，排版时遵守。
+  Default 可把样张作为 Stage 2 的视觉证据，但不单独制造第三个确认门；Quick 直接选择最适合内容的一套。预设清单见 `styles/index.json`，每套硬规则在对应 JSON 中。
 
-## G6 版式规划
+### 版式规划与 Stage 2
 
 ```bash
 python3 $S/plan_deck.py $W --level full            # 有生图模型时可加 --sheets，一张大图切多张小插画
 ```
 
-它写出 plan.json 和 design_spec.md。审一遍：版式是否贴合内容、每页视觉焦点是否清楚、插画提示词是否具体（见 `image_prompts.md`）。
+它写出 `plan.json` 和 `design_spec.md`。审一遍：页面任务能否推动观众变化、版式是否贴合内容、节奏是否有呼吸、视觉焦点是否清楚、图片槽位与提示词是否具体（见 `image_prompts.md`）。
 可以在 plan.json 每页补 `relation`（和前后页的关系，比如"承接上页的数据，转入怎么做"），帮助统一节奏。
-把 design_spec.md 的表格发给用户确认后再出图，出图是最花钱的一步。
-
-## G7 出图、组装、检查
+Default 把完整 `design_spec.md` 作为一次 Stage 2 方案展示；用户确认后运行：
 
 ```bash
-python3 $S/pipeline.py $W
+python3 $S/workflow_state.py confirm $W stage2
 ```
 
-生成模式下 QA 以 deck.json 为准，检查每段文字都上了页面，其余检查和美化相同。
-AI 插画的最终提示词会写进 `prompts/`，要改某张图就改它的提示词文件，再 `make_assets.py $W --only hero_05 --force`。
+Quick 不停下来，但必须先完成同样的内容/视觉/媒体/备注决定。
 
-## G8 交付
+## Step 4：生产与交付
 
-pptx、预览图，加一两句说明：用了哪套风格、插画来源（模型或程序化）、有没有需要用户补充核实的内容。
+读取 `production.md`。生成路线的 QA 以 `deck.json` 为准，检查每段可见文字都进入页面。AI 图片最终提示词写入 `prompts/`；局部改图时修对应 prompt，再运行 `make_assets.py $W --only hero_05 --force` 和后续流水线。
