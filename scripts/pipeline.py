@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from workflow_state import mark_complete, require_ready  # noqa: E402
 
 
 def run(args):
@@ -32,8 +34,16 @@ def main():
     ap.add_argument("--dpi", type=int, default=110)
     ap.add_argument("--lite", action="store_true",
                     help="skip LibreOffice and draw approximate previews from the layout dump (faster)")
+    ap.add_argument("--legacy-workspace", action="store_true",
+                    help="allow an older work directory without workflow.json (migration only)")
     a = ap.parse_args()
     w = Path(a.work)
+    if not a.legacy_workspace:
+        try:
+            require_ready(w, "produce")
+        except RuntimeError as exc:
+            print(f"workflow gate failed: {exc}", file=sys.stderr)
+            return 1
     ma = [HERE / "make_assets.py", w]
     if a.config:
         ma += ["--config", a.config]
@@ -57,15 +67,24 @@ def main():
         run([HERE / "compare_sheet.py", w])
     elif (w / "source_text.json").exists():
         print("NOTE 原稿没有渲染图（解析原稿时缺 LibreOffice），前后对比图跳过；美化版的逐页预览不受影响")
-    run([HERE / "review.py", w])
+    review_rc = run([HERE / "review.py", w])
     if lite:
         print("NOTE " + ("按 --lite 跳过了 LibreOffice" if a.lite else "没找到 LibreOffice") +
               "，预览图是按排版数据直接画的近似图（render_lite），排版和溢出照样能看，"
               "图表是简化画法；要看 PowerPoint 级效果，装 LibreOffice 后重跑")
     elif not rendered:
         print("NOTE 没有生成预览图，视觉检查只能跳过，pptx 已正常生成")
-    print("\nQA", "has ERRORS, fix before delivering" if rc else "passed (review WARN lines)")
+    if rc:
+        print("\nQA has ERRORS; repair the owning deck/style/plan layer and rerun pipeline.py")
+        return rc
+    if review_rc:
+        print("\nreview failed; do not deliver until the review evidence is available")
+        return review_rc
+    if not a.legacy_workspace:
+        mark_complete(w)
+    print("\nQA passed (review WARN lines)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

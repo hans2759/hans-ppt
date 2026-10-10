@@ -112,7 +112,7 @@ def main():
     src_path = work / "source_text.json"
     gen_mode = not src_path.exists()
     if gen_mode:
-        # generated deck: the confirmed deck.json is the reference text
+        # generated deck: deck.json is the reference text
         import sys as _s
         _s.path.insert(0, str(Path(__file__).resolve().parent))
         from outline_check import screen_text

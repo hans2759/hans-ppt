@@ -17,7 +17,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_json, save_json, SKILL_DIR, ASSET_DIR, list_icons  # noqa: E402
+from common import (load_json, save_json, SKILL_DIR, ASSET_DIR, list_icons,
+                    slide_rhythm, slide_minutes, slide_transition)  # noqa: E402
+from workflow_state import require_ready  # noqa: E402
 import layouts as L  # noqa: E402
 
 KW = load_json(ASSET_DIR / "icon_keywords.json")
@@ -76,6 +78,7 @@ FOCUS = {
 }
 
 SIZES = {"large": (1400, 1300), "side": (1400, 900), "corner": (1400, 830), "top": (1400, 1050)}
+SLOT_LABELS = {"large": "14:13 主视觉", "side": "14:9 侧栏", "corner": "14:8.3 角落", "top": "4:3 顶图"}
 
 
 def pick_icon(text, used, default, strong=""):
@@ -108,22 +111,52 @@ def write_spec(work, deck, plan):
         for it in x.get("items", []):
             heroes[it["id"]] = it
     by_n = {s["n"]: s for s in deck["slides"]}
+    try:
+        workflow = load_json(work / "workflow.json")
+        workflow_line = f"{workflow.get('route', '-')} / {workflow.get('profile', '-')}"
+    except Exception:
+        workflow_line = "legacy"
     lines = [f"# 设计规格 · {meta.get('title', '')}", "",
+             "## Stage 1 · 沟通契约", "",
+             f"- 工作流：{workflow_line}",
+             f"- 场景 / 受众：{meta.get('scenario', '未设置')} / {meta.get('audience', '未设置')}",
+             f"- 演示目标：{meta.get('objective', '未设置')}",
+             f"- 观众结果：{meta.get('audience_outcome', '未设置')}",
+             f"- 故事线：{meta.get('storyline', '未设置')}",
+             "", "## Stage 2 · 完整方案", "",
              f"- 风格：{style_line}",
-             f"- 美化力度：{plan['level']}，共 {len(plan['slides'])} 页，插画 {len(heroes)} 张",
-             f"- 视觉锚点：{(meta.get('anchor') or {}).get('description', '（未设置）')}"]
+             f"- 制作力度：{plan['level']}，共 {len(plan['slides'])} 页，插画 {len(heroes)} 张",
+             f"- 视觉锚点：{(meta.get('anchor') or {}).get('description', '（未设置）')}",
+             f"- 演讲备注：{'启用（结构化新备注）' if meta.get('notes', True) else '关闭'}"]
     if rules:
         lines += ["- 风格硬规则：" + "；".join(rules)]
-    lines += ["", "| 页 | 标题 | 版式 | 视觉焦点 | 插画 |", "| --- | --- | --- | --- | --- |"]
+    lines += ["", "| 页 / ID | 标题 | 版式 / 节奏 | 页面任务 → 观众变化 | 视觉焦点 / 媒体槽位 |",
+              "| --- | --- | --- | --- | --- |"]
     for p in plan["slides"]:
         s = by_n.get(p["n"], {})
         title = (s.get("title") or s.get("headline") or s.get("question") or s.get("quote") or "").replace("**", "").replace("|", "/")
         h = heroes.get(p.get("hero", ""), {})
-        lines.append(f"| {p['n']} | {title} | {p['layout']} | {p.get('focus', '')} | {h.get('prompt', '-')[:60]} |")
+        purpose = (s.get("purpose") or "-").replace("|", "/")
+        move = (s.get("audience_move") or "-").replace("|", "/")
+        relation = slide_transition(s).replace("|", "/")
+        if relation:
+            move += "；转场：" + relation[:36]
+        media = p.get("focus") or "-"
+        if p.get("image_slot"):
+            media += " · " + p["image_slot"]
+        if h:
+            media += " · " + h.get("prompt", "")[:42].replace("|", "/")
+        lines.append(f"| {p['n']} / {s.get('id', '-')} | {title} | {p['layout']} / {p.get('rhythm', '-')} | "
+                     f"{purpose} → {move} | {media} |")
+    planned = [(p["n"], slide_minutes(by_n.get(p["n"], {}))) for p in plan["slides"]]
+    if any(m is not None for _, m in planned):
+        total = sum(m or 0 for _, m in planned)
+        target = meta.get("duration_minutes")
+        lines += ["", f"- 计划讲述时长：{total:g} 分钟" + (f" / 目标 {target} 分钟" if target else "")]
     warn = [(p["n"], w) for p in plan["slides"] for w in p.get("capacity_warnings", [])]
     if warn:
         lines += ["", "容量提醒（出图前先处理）："] + [f"- 第 {n} 页：{w}" for n, w in warn]
-    lines += ["", "确认后再出图；要调整就改 plan.json 里对应页的 layout、icons 或插画 prompt。"]
+    lines += ["", "Default 模式需确认本方案并记录 Stage 2 后再生产；要调整就改 plan.json 里对应页的 layout、icons 或插画 prompt。"]
     (work / "design_spec.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -136,8 +169,15 @@ def main():
     ap.add_argument("--reset", action="store_true",
                     help="re-plan every slide; by default slides whose deck.json content did not change keep their "
                          "existing plan (layout, icons, hand-edited hero prompts)")
+    ap.add_argument("--legacy-workspace", action="store_true",
+                    help="allow an older work directory without workflow.json (migration only)")
     a = ap.parse_args()
     work = Path(a.work)
+    if not a.legacy_workspace:
+        try:
+            require_ready(work, "plan")
+        except RuntimeError as exc:
+            sys.exit(f"workflow gate failed: {exc}")
     deck = load_json(work / "deck.json")
     meta = deck.get("meta", {})
     anchor = (meta.get("anchor") or {}).get("description") or f"a glossy rounded app icon for {meta.get('title', 'the topic')}"
@@ -188,8 +228,10 @@ def main():
         else:
             src = s.get("callout") or s.get("lead") or s.get("pill") or s.get("cta") or ""
             icons.append(pick_icon(src, used, defaults[0]))
-        ps = {"n": s["n"], "layout": layout, "icons": icons,
-              "purpose": s.get("purpose", ""), "focus": FOCUS.get(layout, ""), "relation": ""}
+        ps = {"n": s["n"], "id": s.get("id", ""), "layout": layout, "icons": icons,
+              "purpose": s.get("purpose", ""), "audience_move": s.get("audience_move", ""),
+              "focus": FOCUS.get(layout, ""), "rhythm": slide_rhythm(s),
+              "relation": slide_transition(s)}
         if cap_probs:
             ps["capacity_warnings"] = cap_probs
         if s.get("lead"):
@@ -197,6 +239,8 @@ def main():
         if s.get("takeaway"):
             ps["takeaway_icon"] = pick_icon(s["takeaway"], set(), "info")
         slot = L.HERO_SLOT.get(layout)
+        if slot:
+            ps["image_slot"] = SLOT_LABELS.get(slot, slot)
         want = slot and (a.level == "full" or (a.level == "standard" and (slot in ("large", "top") or layout == "cover_hero")))
         if layout in style_skip:
             want = False  # the style lets typography carry these pages
@@ -204,7 +248,8 @@ def main():
             hid = f"hero_{s['n']:02d}"
             idea, scene = HERO_IDEAS.get(layout, HERO_IDEAS["list_icons"])
             w, h = SIZES.get(slot, (1400, 1200))
-            assets.append({"id": hid, "kind": "hero", "slide": s["n"], "size": [w, h], "transparent": True,
+            assets.append({"id": hid, "kind": "hero", "slide": s["n"], "slot": slot,
+                           "aspect_ratio": f"{w}:{h}", "size": [w, h], "transparent": True,
                            "prompt": idea.format(anchor=anchor, topic=topic),
                            "fallback": {"scene": scene, "glyph": glyph if scene == "tile" else None}})
             ps["hero"] = hid
@@ -240,22 +285,32 @@ def main():
         for k, ps in enumerate(slides):
             op = old_slides.get(ps["n"])
             if op and op.get("src_hash") == ps["src_hash"]:
-                slides[k] = op
+                # Preserve human-edited layout/icons/prompts, but always refresh
+                # the planning-contract fields added by the current version.
+                kept_plan = dict(op)
+                for key in ("id", "purpose", "audience_move", "rhythm", "relation", "image_slot", "src_hash"):
+                    if key in ps:
+                        kept_plan[key] = ps[key]
+                slides[k] = kept_plan
                 kept.append(ps["n"])
-                hid = op.get("hero")
+                hid = kept_plan.get("hero")
                 if hid and hid in old_assets:
                     # put the old (possibly hand-edited) hero back in place of the new one
                     def swap(lst):
                         for j, x in enumerate(lst):
                             if x.get("id") == hid:
-                                lst[j] = old_assets[hid]
+                                previous = dict(old_assets[hid])
+                                for field in ("slot", "aspect_ratio", "size"):
+                                    if field in x:
+                                        previous.setdefault(field, x[field])
+                                lst[j] = previous
                                 return True
                             if x.get("kind") == "sheet" and swap(x.get("items", [])):
                                 return True
                         return False
                     if not swap(assets):
                         assets.append(old_assets[hid])
-    plan = {"level": a.level, "confirmed": False, "slides": slides, "assets": assets}
+    plan = {"level": a.level, "slides": slides, "assets": assets}
     save_json(plan, work / "plan.json")
     if kept:
         print(f"保留了 {len(kept)} 页原有规划（内容没变）：{kept}；要全部重排加 --reset")

@@ -247,21 +247,36 @@ def selftest(report):
         for st in steps:
             if subprocess.run([str(x) for x in st], capture_output=True).returncode:
                 raise RuntimeError("extract_deck 失败")
-        deck = {"meta": {"title": "Test", "series": "", "anchor": {"description": "a glossy app icon", "glyph": "T"}},
-                "slides": [{"n": 1, "type": "cover", "title": "自测封面", "subtitle": "hans-ppt"},
-                           {"n": 2, "type": "list", "title": "三个要点",
-                            "items": [{"text": "第一点"}, {"text": "第二点"}, {"text": "第三点"}]}]}
+        deck = {"meta": {"title": "Test", "series": "", "notes": True,
+                         "objective": "验证组装流程", "audience_outcome": "确认技能可用",
+                         "anchor": {"description": "a glossy app icon", "glyph": "T"}},
+                "slides": [{"n": 1, "id": "cover", "type": "cover", "title": "自测封面",
+                            "subtitle": "hans-ppt", "notes": "这条旧式备注不应进入成品"},
+                           {"n": 2, "id": "three-points", "type": "list", "title": "三个要点",
+                            "purpose": "验证结构化备注", "audience_move": "从未知变成确认",
+                            "items": [{"text": "第一点"}, {"text": "第二点"}, {"text": "第三点"}],
+                            "notes": {"talk": ["这是一条新模式备注"], "minutes": 0.3}}]}
         (W / "deck.json").write_text(json.dumps(deck, ensure_ascii=False), encoding="utf-8")
         (W / "style.json").write_text(json.dumps({"name": "selftest"}), encoding="utf-8")
-        for st in ([py, HERE / "plan_deck.py", W, "--level", "standard"],
-                   [py, HERE / "make_assets.py", W, "--procedural"],
-                   [py, HERE / "build_deck.py", W],
-                   [py, HERE / "qa_check.py", W]):
+        for st in ([py, HERE / "workflow_state.py", "init", W, "--route", "beautify", "--profile", "quick"],
+                   [py, HERE / "plan_deck.py", W, "--level", "standard"],
+                   [py, HERE / "pipeline.py", W, "--procedural", "--lite"]):
             pr = subprocess.run([str(x) for x in st], capture_output=True, text=True)
             if pr.returncode:
                 raise RuntimeError(f"{Path(str(st[1])).name} 失败：{(pr.stdout + pr.stderr).strip()[-300:]}")
         out = W / "out" / "beautified.pptx"
-        Presentation(str(out))
+        built = Presentation(str(out))
+        if built.slides[0].has_notes_slide and "这条旧式备注不应进入成品" in built.slides[0].notes_slide.notes_text_frame.text:
+            raise RuntimeError("旧式备注被意外写入成品")
+        notes_text = built.slides[1].notes_slide.notes_text_frame.text
+        if "【讲述要点】" not in notes_text or "这是一条新模式备注" not in notes_text:
+            raise RuntimeError("结构化备注没有正确写入成品")
+        state = json.loads((W / "workflow.json").read_text(encoding="utf-8"))
+        if state.get("phase") != "complete":
+            raise RuntimeError("pipeline 没有写入完成状态")
+        if subprocess.run([py, str(HERE / "workflow_state.py"), "check", str(W), "--for", "deliver"],
+                          capture_output=True).returncode:
+            raise RuntimeError("交付门禁未通过")
         say("  组装与自动检查 通过")
         if report.get("soffice"):
             pr = subprocess.run([py, str(HERE / "render.py"), str(out), str(W / "out" / "png")],
