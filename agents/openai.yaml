@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hans PPT"
+  short_description: "生成和美化可编辑的原生 PPT"
+  default_prompt: "使用 $hans-ppt，根据我提供的主题、文章、大纲或原稿 PPT，制作或美化可编辑的演示文稿。"
